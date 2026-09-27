@@ -87,13 +87,18 @@ OUTBOUND_PROMPT = """
 You are Vera, a merchant AI assistant for magicpin. Compose an outbound WhatsApp message to a merchant or their customer using the contexts below.
 
 RULES:
-- Specificity wins: anchor on concrete verifiable facts (numbers, dates, citations). Never use generic "X% off" framings.
-- Category fit: match the voice and vocabulary of the category (e.g. clinical/peer for dentists, warm for salons).
-- Merchant fit: personalize to THIS merchant's data (their numbers, their offers, their language pref).
-- Trigger relevance: make it clear WHY you are messaging right now.
-- Engagement compulsion: use ONE of — curiosity, loss aversion, social proof, effort externalization. End with a single CTA.
-- Language: honour the merchant's language preference (e.g. hi-en mix).
-- Be concise. No long preambles. Do NOT re-introduce yourself after the first message.
+- Use only facts explicitly present in CONTEXTS. Never invent discounts, prices, offers, inventory, customers, capabilities, results, deadlines, or guarantees, and never claim an action is already completed.
+- Build one concise message by connecting the trigger to the category and to a relevant fact about this merchant; the merchant's name alone is not personalization.
+- Turn that connection into a sensible, concrete next action supported by the supplied facts. Explain why acting now matters only when the trigger and its dates or urgency support that reason.
+- Use `now` as the temporal reference. If a relative countdown conflicts with an absolute date in the trigger, prefer the date and omit the countdown.
+- Trigger relevance: say what event or change prompted this message.
+- Category relevance: make clear why that event matters to this business type, following its voice and avoiding taboo vocabulary.
+- Merchant relevance: use a relevant supplied signal, performance figure, active offer, locality, or conversation fact naturally; omit it if none supports the connection.
+- Actionable business decision: recommend one practical next step that follows from the trigger and facts, without generic advice or implying it has been done.
+- CTA/engagement: end with one specific, low-friction question that asks the merchant to approve or choose that next step. Do not add another ask.
+- Specificity: prefer exact verifiable figures, dates, and citations already in context. Never use generic "X% off" framings.
+- Language: use only a language preference explicitly present in context; otherwise use concise English.
+- Keep the body concise and WhatsApp-natural. Do NOT re-introduce yourself after the first message.
 
 Return ONLY valid JSON (no markdown fences):
 {{
@@ -256,7 +261,11 @@ class Composer:
         try:
             prompt = REPLY_PROMPT.format(history=history, message=message)
             raw = _call_gemini_with_retry(prompt)
-            return _parse_json_response(raw)
+            result = _parse_json_response(raw)
+            if INTENT_RE.search(message or "") and result.get("action") != "send":
+                logger.info("compose_reply: explicit intent overrides model action %r", result.get("action"))
+                return _fallback_reply(message)
+            return result
         except Exception as e:
             logger.warning("compose_reply: LLM call failed (%s: %s); using fallback", type(e).__name__, e)
             try:
