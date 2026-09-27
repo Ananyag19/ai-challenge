@@ -1,13 +1,16 @@
 import json
 
+import pytest
+
 from app.services import composer as composer_module
 
 
-def test_reply_with_clear_intent_sends_via_fallback(client):
+def test_reply_with_clear_intent_sends_via_fallback(client, monkeypatch):
     # No GEMINI_API_KEY in the test environment -> falls back to the
     # deterministic composer, which must still detect explicit intent
     # ("Yes, ...") and move to action mode rather than parking on "wait"
     # (this is the intent-handoff failure the challenge brief calls out).
+    monkeypatch.setattr(composer_module, "_get_api_key", lambda: "")
     response = client.post(
         "/v1/reply",
         json={
@@ -27,7 +30,8 @@ def test_reply_with_clear_intent_sends_via_fallback(client):
     assert "rationale" in body
 
 
-def test_reply_without_intent_signal_waits_via_fallback(client):
+def test_reply_without_intent_signal_waits_via_fallback(client, monkeypatch):
+    monkeypatch.setattr(composer_module, "_get_api_key", lambda: "")
     response = client.post(
         "/v1/reply",
         json={
@@ -73,6 +77,49 @@ def test_reply_uses_llm_composition_when_available(client, monkeypatch):
     assert body["action"] == "send"
     assert body["body"] == "Great, I'll get the setup started for you right away."
     assert body["cta"] == "none"
+
+
+@pytest.mark.parametrize("message", [
+    "yes",
+    "yep",
+    "yeah",
+    "sure",
+    "ok",
+    "okay",
+    "go ahead",
+    "I'm in",
+    "sounds good",
+    "let's do it",
+    "do it",
+    "Ok lets do it. Whats next?",
+])
+@pytest.mark.parametrize("model_action", ["wait", "end"])
+def test_reply_explicit_intent_overrides_non_send_llm_action(
+    client, monkeypatch, message, model_action
+):
+    monkeypatch.setattr(
+        composer_module,
+        "_call_gemini",
+        lambda prompt: json.dumps({"action": model_action, "rationale": "Model choice"}),
+    )
+
+    response = client.post(
+        "/v1/reply",
+        json={
+            "conversation_id": f"intent_{message}_{model_action}",
+            "merchant_id": "m_001_drmeera_dentist_delhi",
+            "customer_id": None,
+            "from_role": "merchant",
+            "message": message,
+            "received_at": "2026-04-26T10:45:00Z",
+            "turn_number": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "send"
+    assert body["body"]
 
 
 def test_reply_ends_on_opt_out(client):
